@@ -111,51 +111,63 @@ reportTidyImplic ctxt implic
 
 reportTidyWanteds :: ReportErrCtxt -> WantedConstraints -> TcM ()
 reportTidyWanteds ctxt (WC { wc_flat = flats, wc_insol = insols, wc_impl = implics })
-  | cec_insol ctxt     -- If there are any insolubles, report only them
-                       -- because they are unconditionally wrong
-                       -- Moreover, if any of the insolubles are givens, stop right there
-                       -- ignoring nested errors, because the code is inaccessible
-  = do { let (given, other) = partitionBag (isGivenOrSolved . cc_flavor) insols
+  = do { runtimeCoercionErrors <- doptM Opt_RuntimeCoercionErrors
+       ; let (given, other) = partitionBag (isGivenOrSolved . cc_flavor) insols
              insol_implics  = filterBag ic_insol implics
-       ; if isEmptyBag given
-         then do { mapBagM_ (reportInsoluble ctxt) other
-                 ; mapBagM_ (reportTidyImplic ctxt) insol_implics }
-         else mapBagM_ (reportInsoluble ctxt) given }
-
-  | otherwise          -- No insoluble ones
-  = ASSERT( isEmptyBag insols )
-    do { let flat_evs = bagToList $ mapBag to_wev flats
+             flat_evs = bagToList $ mapBag to_wev flats
              to_wev ct | Wanted wl <- cc_flavor ct = mkEvVarX (cc_id ct) wl
                        | otherwise = panic "reportTidyWanteds: unsolved is not wanted!"
              (ambigs, non_ambigs) = partition     is_ambiguous flat_evs
-       	     (tv_eqs, others)     = partitionWith is_tv_eq     non_ambigs
+             (tv_eqs, others)     = partitionWith is_tv_eq     non_ambigs
 
-       ; groupErrs (reportEqErrs ctxt) tv_eqs
-       ; when (null tv_eqs) $ groupErrs (reportFlat ctxt) others
-       ; mapBagM_ (reportTidyImplic ctxt) implics
+       ; case (runtimeCoercionErrors, cec_insol ctxt) of
+           -- Report all errors, as we will need them for
+           -- making runtime errors
+           -- See Note [Deferring coercion errors to runtime] in TcSimplify
+           (True, _)  -> do { mapBagM_ (reportInsoluble ctxt) given
+                            ; mapBagM_ (reportInsoluble ctxt) other
+                            ; groupErrs (reportEqErrs ctxt) tv_eqs
+                            ; groupErrs (reportFlat ctxt) others
+                            ; mapBagM_ (reportTidyImplic ctxt) implics
+                            ; reportAmbigErrs ctxt ambigs }
 
-       	   -- Only report ambiguity if no other errors (at all) happened
-	   -- See Note [Avoiding spurious errors] in TcSimplify
-       ; ifErrsM (return ()) $ reportAmbigErrs ctxt ambigs }
+           -- There are insolubles, so report only those
+           -- because they are unconditionally wrong
+           -- Moreover, if any of the insolubles are givens, stop right there
+           -- ignoring nested errors, because the code is inaccessible
+           (_, True)  -> if isEmptyBag given then do { 
+                              mapBagM_ (reportInsoluble ctxt) other
+                            ; mapBagM_ (reportTidyImplic ctxt) insol_implics }
+                         else mapBagM_ (reportInsoluble ctxt) given
+
+           -- General case
+           (_, False) -> do {
+               ASSERT( isEmptyBag insols )          
+               groupErrs (reportEqErrs ctxt) tv_eqs
+             ; when (null tv_eqs) $ groupErrs (reportFlat ctxt) others
+             ; mapBagM_ (reportTidyImplic ctxt) implics
+             
+                 -- Only report ambiguity if no other errors (at all) happened
+                 -- See Note [Avoiding spurious errors] in TcSimplify
+             ; ifErrsM (return ()) $ reportAmbigErrs ctxt ambigs } }
   where
-	-- Report equalities of form (a~ty) first.  They are usually
-	-- skolem-equalities, and they cause confusing knock-on 
-	-- effects in other errors; see test T4093b.
+        -- Report equalities of form (a~ty) first.  They are usually
+        -- skolem-equalities, and they cause confusing knock-on 
+        -- effects in other errors; see test T4093b.
     is_tv_eq c | Just (ty1, ty2) <- getEqPredTys_maybe (evVarOfPred c)
                , tcIsTyVarTy ty1 || tcIsTyVarTy ty2
                = Left (c, (ty1, ty2))
                | otherwise
                = Right (c, evVarOfPred c)
 
-	-- Treat it as "ambiguous" if 
-	--   (a) it is a class constraint
+        -- Treat it as "ambiguous" if 
+        --   (a) it is a class constraint
         --   (b) it constrains only type variables
-	--       (else we'd prefer to report it as "no instance for...")
+        --       (else we'd prefer to report it as "no instance for...")
         --   (c) it mentions a (presumably un-filled-in) meta type variable
     is_ambiguous d = isTyVarClassPred pred
                   && any isAmbiguousTyVar (varSetElems (tyVarsOfType pred))
-		  where   
-                     pred = evVarOfPred d
+                  where pred = evVarOfPred d
 
 reportInsoluble :: ReportErrCtxt -> Ct -> TcM ()
 -- Precondition: insolubles are always NonCanonicals! 

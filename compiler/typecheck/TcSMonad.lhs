@@ -1117,12 +1117,13 @@ setEvBind ev t fl
                   | otherwise = False
 
         evterm_evs (EvId v) = [v]
-        evterm_evs (EvCoercionBox lco) = varSetElems $ coVarsOfCo lco
-        evterm_evs (EvDFunApp _ _ evs) = evs
-        evterm_evs (EvTupleSel v _)    = [v]
-        evterm_evs (EvSuperClass v _)  = [v]
-        evterm_evs (EvCast v co)       = v : varSetElems (coVarsOfCo co)
-        evterm_evs (EvTupleMk evs)     = evs
+        evterm_evs (EvCoercionBox lco)  = varSetElems $ coVarsOfCo lco
+        evterm_evs (EvDFunApp _ _ evs)  = evs
+        evterm_evs (EvTupleSel v _)     = [v]
+        evterm_evs (EvSuperClass v _)   = [v]
+        evterm_evs (EvCast v co)        = v : varSetElems (coVarsOfCo co)
+        evterm_evs (EvTupleMk evs)      = evs
+        evterm_evs (EvDelayedError _ _) = []
 #endif
 
 \end{code}

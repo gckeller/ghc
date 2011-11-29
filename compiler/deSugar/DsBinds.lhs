@@ -32,6 +32,7 @@ import DsUtils
 
 import HsSyn		-- lots of things
 import CoreSyn		-- lots of things
+import Literal          ( mkMachString )
 import CoreSubst
 import MkCore
 import CoreUtils
@@ -39,6 +40,7 @@ import CoreArity ( etaExpand )
 import CoreUnfold
 import CoreFVs
 import Digraph
+
 
 import TyCon      ( isTupleTyCon, tyConDataCons_maybe )
 import TcType
@@ -205,13 +207,14 @@ dsEvBinds bs = do { let core_binds = map dsEvSCC sccs
     mk_node b@(EvBind var term) = (b, var, free_vars_of term)
 
     free_vars_of :: EvTerm -> [EvVar]
-    free_vars_of (EvId v)           = [v]
-    free_vars_of (EvCast v co)      = v : varSetElems (coVarsOfCo co)
-    free_vars_of (EvCoercionBox co) = varSetElems (coVarsOfCo co)
-    free_vars_of (EvDFunApp _ _ vs) = vs
-    free_vars_of (EvTupleSel v _)   = [v]
-    free_vars_of (EvTupleMk vs)     = vs
-    free_vars_of (EvSuperClass d _) = [d]
+    free_vars_of (EvId v)             = [v]
+    free_vars_of (EvCast v co)        = v : varSetElems (coVarsOfCo co)
+    free_vars_of (EvCoercionBox co)   = varSetElems (coVarsOfCo co)
+    free_vars_of (EvDFunApp _ _ vs)   = vs
+    free_vars_of (EvTupleSel v _)     = [v]
+    free_vars_of (EvTupleMk vs)       = vs
+    free_vars_of (EvSuperClass d _)   = [d]
+    free_vars_of (EvDelayedError _ _) = []
 
 dsEvSCC :: SCC EvBind -> CoreBind
 
@@ -280,6 +283,9 @@ dsEvTerm (EvSuperClass d n)
   where
     sc_sel_id  = classSCSelId cls n	-- Zero-indexed
     (cls, tys) = getClassPredTys (evVarPred d)    
+dsEvTerm (EvDelayedError ty msg) = Var errorId `mkTyApps` [ty] `mkApps` [litMsg]
+  where errorId = rUNTIME_ERROR_ID
+        litMsg  = Lit (mkMachString (showSDoc (unWSDoc msg)))
     
 ------------------------
 makeCorePair :: Id -> Bool -> Arity -> CoreExpr -> (Id, CoreExpr)

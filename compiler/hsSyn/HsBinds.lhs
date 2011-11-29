@@ -504,10 +504,21 @@ evBindMapBinds bs
 
 -----------------
 instance Data TcEvBinds where
-  -- Placeholder; we can't travers into TcEvBinds
+  -- Placeholder; we can't traverse into TcEvBinds
   toConstr _   = abstractConstr "TcEvBinds"
   gunfold _ _  = error "gunfold"
   dataTypeOf _ = mkNoRepType "TcEvBinds"
+
+-- We need this only because SDoc doesn't have Data or Typeable instances
+newtype WSDoc = WSDoc { unWSDoc :: SDoc }
+
+instance Typeable WSDoc where
+  typeOf _ = panic "Typeable WSDoc"
+
+instance Data WSDoc where
+  toConstr _   = abstractConstr "SDoc"
+  gunfold _ _  = error "SDoc"
+  dataTypeOf _ = mkNoRepType "SDoc"
 
 -- All evidence is bound by EvBinds; no side effects
 data EvBind = EvBind EvVar EvTerm
@@ -530,6 +541,10 @@ data EvTerm
   | EvSuperClass DictId Int    -- n'th superclass. Used for both equalities and
                                -- dictionaries, even though the former have no
                                -- selector Id.  We count up from _0_
+
+  | EvDelayedError Type WSDoc  -- Used with Opt_RuntimeCoercionErrors
+                               -- See Note [Deferring coercion errors to runtime]
+                               -- in TcSimplify
 
   deriving( Data, Typeable)
 \end{code}
@@ -657,6 +672,8 @@ instance Outputable EvTerm where
   ppr (EvTupleMk vs)     = ptext (sLit "tupmk") <+> ppr vs
   ppr (EvSuperClass d n) = ptext (sLit "sc") <> parens (ppr (d,n))
   ppr (EvDFunApp df tys ts) = ppr df <+> sep [ char '@' <> ppr tys, ppr ts ]
+  ppr (EvDelayedError ty msg) =     ptext (sLit "error") 
+                                <+> sep [ char '@' <> ppr ty, unWSDoc msg ]
 \end{code}
 
 %************************************************************************

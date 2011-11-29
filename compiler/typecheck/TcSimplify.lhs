@@ -33,11 +33,13 @@ import NameEnv	( emptyNameEnv )
 import Bag
 import ListSetOps
 import Util
+import ErrUtils         ( ErrMsg, errMsgSpans, pprLocErrMsgBag )
 import PrelInfo
 import PrelNames
 import Class		( classKey )
 import BasicTypes       ( RuleName )
-import Control.Monad    ( when )
+import DynFlags         ( DynFlag( Opt_RuntimeCoercionErrors ) )
+import Control.Monad    ( when, unless )
 import Outputable
 import FastString
 import TrieMap
@@ -282,13 +284,18 @@ simplifyInfer _top_lvl apply_mr name_taus wanteds
              ]
 
             -- Step 2 
-       	    -- Now simplify the possibly-bound constraints
-       ; (simpl_results, tc_binds0)
-           <- runTcS (SimplInfer (ppr (map fst name_taus))) NoUntouchables emptyInert emptyWorkList $
+            -- Now simplify the possibly-bound constraints
+       ; let ctxt = SimplInfer (ppr (map fst name_taus))
+       ; (simpl_results, tc_regular_binds)
+           <- runTcS ctxt NoUntouchables emptyInert emptyWorkList $
               simplifyWithApprox (zonked_wanteds { wc_flat = perhaps_bound })
 
-       ; when (insolubleWC simpl_results)  -- Fail fast if there is an insoluble constraint
-              (do { reportUnsolved simpl_results; failM })
+            -- Fail fast if there is an insoluble constraint
+            -- unless we are deferring errors to runtime
+       ; tc_err_binds <- if (insolubleWC simpl_results)
+                         then reportOrDefer True ctxt simpl_results
+                         else return emptyBag
+       ; let tc_all_binds = tc_regular_binds `unionBags` tc_err_binds
 
             -- Step 3 
             -- Split again simplified_perhaps_bound, because some unifications 
@@ -314,7 +321,7 @@ simplifyInfer _top_lvl apply_mr name_taus wanteds
          then ASSERT( isEmptyBag (wc_insol simpl_results) )
               do { traceTc "} simplifyInfer/no quantification" empty
                  ; emitImplications (wc_impl simpl_results)
-                 ; return ([], [], mr_bites, EvBinds tc_binds0) }
+                 ; return ([], [], mr_bites, EvBinds tc_all_binds) }
          else do
 
             -- Step 4, zonk quantified variables 
@@ -332,7 +339,8 @@ simplifyInfer _top_lvl apply_mr name_taus wanteds
             -- Minimize `bound' and emit an implication
        ; minimal_bound_ev_vars <- mapM TcMType.newEvVar minimal_flat_preds
        ; ev_binds_var <- newTcEvBinds
-       ; mapBagM_ (\(EvBind evar etrm) -> addTcEvBind ev_binds_var evar etrm) tc_binds0
+       ; mapBagM_ (\(EvBind evar etrm) -> addTcEvBind ev_binds_var evar etrm) 
+           tc_all_binds
        ; lcl_env <- getLclTypeEnv
        ; gloc <- getCtLoc skol_info
        ; let implic = Implic { ic_untch    = NoUntouchables
@@ -569,7 +577,7 @@ Consider
   f :: (forall a. Eq a => a->a) -> Bool -> ...
   {-# RULES "foo" forall (v::forall b. Eq b => b->b).
        f b True = ...
-    #=}
+    #-}
 Here we *must* solve the wanted (Eq a) from the given (Eq a)
 resulting from skolemising the agument type of g.  So we 
 revert to SimplCheck when going under an implication.  
@@ -681,15 +689,112 @@ simplifyCheck ctxt wanteds
        ; traceTc "simplifyCheck {" (vcat
              [ ptext (sLit "wanted =") <+> ppr wanteds ])
 
-       ; (unsolved, ev_binds) <- 
-           solveWanteds ctxt NoUntouchables wanteds
+       ; (unsolved, evBinds) <- solveWanteds ctxt NoUntouchables wanteds
 
-       ; traceTc "simplifyCheck }" $
-         ptext (sLit "unsolved =") <+> ppr unsolved
+       ; traceTc "simplifyCheck }" $ ptext (sLit "unsolved =") <+> ppr unsolved
 
-       ; reportUnsolved unsolved
+       -- See Note [Deferring coercion errors to runtime]
+       ; errEvBinds <- reportOrDefer False ctxt unsolved
+       ; return (evBinds `unionBags` errEvBinds) }
 
-       ; return ev_binds }
+reportOrDefer :: Bool
+              -> SimplContext
+              -> WantedConstraints -> TcM (Bag EvBind)
+reportOrDefer should_fail ctxt unsolved
+  = do { runtimeCoercionErrors <- doptM Opt_RuntimeCoercionErrors
+
+        -- If we're deferring errors to runtime
+       ; if runtimeCoercionErrors then do {
+        -- Get all possible errors, but do not print them, nor fail
+         ((_,errMsgs), _) <- tryTc $ reportUnsolved unsolved
+       ; let pprErrMsgs = vcat (pprLocErrMsgBag errMsgs)
+       ; traceTc "reportOrDefer error messages" pprErrMsgs
+       ; unless (isEmptyWC unsolved && isEmptyBag errMsgs) $
+         addWarn (hang (text "deferring the following errors:") 2 pprErrMsgs)
+        -- Set the bindings of the unsolved constraints to runtime errors
+       ; (_, errEvBinds) <- runTcS ctxt NoUntouchables emptyInert emptyWorkList
+                          $ deferErrorsToRuntime errMsgs unsolved
+        -- Return the updated binds
+       ; return errEvBinds }
+
+        -- If not, report them straight away, possibly failing immediately
+         else do {
+         reportUnsolved unsolved
+       ; when should_fail failM
+       ; return emptyBag } }
+\end{code}
+
+Note [Deferring coercion errors to runtime]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+While developing, sometimes it is desirable to allow compilation to succeed even
+if there are type errors in the code. Consider the following case:
+
+  module Main where
+
+  a :: Int
+  a = 'a'
+
+  main = print "b"
+
+Even though `a` is ill-typed, it is not used in the end, so if all that we're
+interested in is `main` it is handy to be able to ignore the problems in `a`.
+
+Since we treat type equalities as evidence, this is relatively simple. Whenever
+we run into a type mismatch in TcUnify, we normally just emit an error. But it
+is always safe to defer the mismatch to the main constraint solver. If we do
+that, `a` will get transformed into
+
+  co :: Int ~ Char
+  co = ...
+
+  a :: Int
+  a = 'a' `cast` co
+
+The constraint solver would realize that `co` is an insoluble constraint, and
+emit an error with `reportUnsolved`. But we can also replace the right-hand side
+of `co` with `error "Deferred type error: Int ~ Char"`. This allows the program
+to compile, and it will run fine unless we evaluate `a`. This is what
+`deferErrorsToRuntime` does.
+
+It does this by aggregating all the coercion error messages in the program and
+them getting the relevant ones for each coercion, by comparing the locations
+of the coercion and the error message. It's a hack, but it means we don't have
+to entirely rewrite TcErrors: currently error reporting is done by writing into
+a mutable variable, and not by returning the individual `SDoc`s, as we would
+need. We are reasonably sure that the error messages will always have the same
+location as the coercion they originate from because that is basically the only
+location they can have.
+
+\begin{code}
+deferErrorsToRuntime :: Bag ErrMsg -> WantedConstraints -> TcS ()
+deferErrorsToRuntime errMsgs (WC { wc_flat  = flats
+                                 , wc_impl  = implics
+                                 , wc_insol = insols })
+  = do { mapBagM_ (deferCt errMsgs) flats
+       ; mapBagM_ (deferCt errMsgs) insols
+       ; mapBagM_ (deferImplication errMsgs) implics }
+
+deferImplication :: Bag ErrMsg -> Implication -> TcS ()
+deferImplication errMsgs impl
+  = nestImplicTcS (ic_binds impl) (ic_untch impl, emptyVarSet) 
+  $ deferErrorsToRuntime errMsgs (ic_wanted impl)
+
+deferCt :: Bag ErrMsg -> Ct -> TcS ()
+deferCt errMsgs ct 
+  = do traceTcS "Deferring error for" (ppr ct_id <+> text "at" <+> ppr ct_span)
+       when (isEmptyBag filteredErrors) $
+         traceTcS "  No error found!" empty
+       _ <- setEvBind ct_id (EvDelayedError ct_type (WSDoc errorMsg)) ct_flavor
+       return ()
+  where ct_id     = cc_id ct
+        ct_type   = varType ct_id
+        ct_span   = ctSpan ct
+        ct_flavor = cc_flavor ct
+        errorMsg  =    vcat (pprLocErrMsgBag filteredErrors)
+                    $$ text "(deferred static error)"
+        filteredErrors = filterBag
+                           (\msg -> any (ct_span ==) (errMsgSpans msg)) errMsgs
 
 ----------------
 solveWanteds :: SimplContext 

@@ -287,6 +287,7 @@ data DynFlag
    | Opt_GhciSandbox
    | Opt_GhciHistory
    | Opt_HelpfulErrors
+   | Opt_RuntimeCoercionErrors
 
    -- temporary flags
    | Opt_RunCPS
@@ -1810,6 +1811,7 @@ fFlags = [
   ( "ghci-sandbox",                     Opt_GhciSandbox, nop ),
   ( "ghci-history",                     Opt_GhciHistory, nop ),
   ( "helpful-errors",                   Opt_HelpfulErrors, nop ),
+  ( "runtime-coercion-errors",          Opt_RuntimeCoercionErrors, nop ),
   ( "building-cabal-package",           Opt_BuildingCabalPackage, nop ),
   ( "implicit-import-qualified",        Opt_ImplicitImportQualified, nop ),
   ( "prof-count-entries",               Opt_ProfCountEntries, nop ),

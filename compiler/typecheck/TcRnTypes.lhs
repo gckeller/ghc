@@ -64,7 +64,7 @@ module TcRnTypes(
         WantedEvVar,
 
         Implication(..),
-        CtLoc(..), ctLocSpan, ctLocOrigin, setCtLocOrigin,
+        CtLoc(..), ctSpan, ctLocSpan, ctLocOrigin, setCtLocOrigin,
 	CtOrigin(..), EqOrigin(..), 
         WantedLoc, GivenLoc, GivenKind(..), pushErrCtxt,
 
@@ -1282,6 +1282,12 @@ data CtLoc orig = CtLoc orig SrcSpan [ErrCtxt]
 
 type WantedLoc = CtLoc CtOrigin      -- Instantiation for wanted constraints
 type GivenLoc  = CtLoc SkolemInfo    -- Instantiation for given constraints
+
+ctSpan :: Ct -> SrcSpan
+ctSpan c = case cc_flavor c of
+             Given l _ -> ctLocSpan l
+             Derived l -> ctLocSpan l
+             Wanted l  -> ctLocSpan l
 
 ctLocSpan :: CtLoc o -> SrcSpan
 ctLocSpan (CtLoc _ s _) = s
