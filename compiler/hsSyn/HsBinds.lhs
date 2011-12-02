@@ -542,7 +542,7 @@ data EvTerm
                                -- dictionaries, even though the former have no
                                -- selector Id.  We count up from _0_
 
-  | EvDelayedError Type WSDoc  -- Used with Opt_RuntimeCoercionErrors
+  | EvDelayedError Type WSDoc  -- Used with Opt_WarnTypeErrors
                                -- See Note [Deferring coercion errors to runtime]
                                -- in TcSimplify
 

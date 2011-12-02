@@ -38,7 +38,7 @@ import PrelInfo
 import PrelNames
 import Class		( classKey )
 import BasicTypes       ( RuleName )
-import DynFlags         ( DynFlag( Opt_RuntimeCoercionErrors ) )
+import DynFlags         ( WarningFlag( Opt_WarnTypeErrors ) )
 import Control.Monad    ( when, unless )
 import Outputable
 import FastString
@@ -701,7 +701,7 @@ reportOrDefer :: Bool
               -> SimplContext
               -> WantedConstraints -> TcM (Bag EvBind)
 reportOrDefer should_fail ctxt unsolved
-  = do { runtimeCoercionErrors <- doptM Opt_RuntimeCoercionErrors
+  = do { runtimeCoercionErrors <- woptM Opt_WarnTypeErrors
 
         -- If we're deferring errors to runtime
        ; if runtimeCoercionErrors then do {

@@ -111,7 +111,7 @@ reportTidyImplic ctxt implic
 
 reportTidyWanteds :: ReportErrCtxt -> WantedConstraints -> TcM ()
 reportTidyWanteds ctxt (WC { wc_flat = flats, wc_insol = insols, wc_impl = implics })
-  = do { runtimeCoercionErrors <- doptM Opt_RuntimeCoercionErrors
+  = do { runtimeCoercionErrors <- woptM Opt_WarnTypeErrors
        ; let (given, other) = partitionBag (isGivenOrSolved . cc_flavor) insols
              insol_implics  = filterBag ic_insol implics
              flat_evs = bagToList $ mapBag to_wev flats
