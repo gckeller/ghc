@@ -126,10 +126,19 @@ reportTidyWanteds ctxt (WC { wc_flat = flats, wc_insol = insols, wc_impl = impli
            -- See Note [Deferring coercion errors to runtime] in TcSimplify
            (True, _)  -> do { mapBagM_ (reportInsoluble ctxt) given
                             ; mapBagM_ (reportInsoluble ctxt) other
-                            ; groupErrs (reportEqErrs ctxt) tv_eqs
-                            ; groupErrs (reportFlat ctxt) others
+
+                            -- Do not group errors, so that we get exactly one
+                            -- error per coercion
+                            ; let repWith rep (w,t) = rep ctxt [t]
+                                                        (ctLocOrigin (evVarX w))
+                            ; mapM_ (repWith reportEqErrs) tv_eqs
+                            ; mapM_ (repWith reportFlat) others
+
                             ; mapBagM_ (reportTidyImplic ctxt) implics
-                            ; reportAmbigErrs ctxt ambigs }
+
+                            ; let repAmbigs x = reportAmbigGroup ctxt
+                                          [(x, varSetElems (tyVarsOfEvVarX x))]
+                            ; mapM_ repAmbigs ambigs }
 
            -- There are insolubles, so report only those
            -- because they are unconditionally wrong
