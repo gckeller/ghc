@@ -361,7 +361,7 @@ mkIface_ hsc_env maybe_old_fingerprint
      deliberatelyOmitted :: String -> a
      deliberatelyOmitted x = panic ("Deliberately omitted: " ++ x)
 
-     ifFamInstTcName = ifaceTyConName . ifFamInstTyCon
+     ifFamInstTcName = ifFamInstFam
 
      flattenVectInfo (VectInfo { vectInfoVar          = vVar
                                , vectInfoTyCon        = vTyCon
@@ -468,13 +468,13 @@ addFingerprints hsc_env mb_old_fingerprint iface0 new_decls
        mk_put_name :: (OccEnv (OccName,Fingerprint))
                    -> BinHandle -> Name -> IO  ()
        mk_put_name local_env bh name
-          | isWiredInName name  =  putNameLiterally bh name 
+          | isWiredInName name || name `elem` famInstNames
+          = putNameLiterally bh name 
            -- wired-in names don't have fingerprints
           | otherwise
           = ASSERT2( isExternalName name, ppr name )
             let hash | nameModule name /= this_mod =  global_hash_fn name
-                     | otherwise = 
-                        snd (lookupOccEnv local_env (getOccName name)
+                     | otherwise = snd (lookupOccEnv local_env (getOccName name)
                            `orElse` pprPanic "urk! lookup local fingerprint" 
                                        (ppr name)) -- (undefined,fingerprint0))
                 -- This panic indicates that we got the dependency
@@ -486,6 +486,13 @@ addFingerprints hsc_env mb_old_fingerprint iface0 new_decls
                 -- --show-iface.
             in 
             put_ bh hash
+
+       famInstNames = [ getAxiomName (ifFamInstAxiom famInst)
+                      | famInst <- mi_fam_insts iface0
+                      , isNothing (ifFamInstTyCon famInst) ]
+
+       getAxiomName (IfaceCoConApp (IfaceCoAx name) []) = name
+       getAxiomName _                                   = panic "getAxiomName"
 
         -- take a strongly-connected group of declarations and compute
         -- its fingerprint.
@@ -1475,7 +1482,7 @@ tyThingToIfaceDecl (ATyCon tycon)
     famInstToIface (Just (famTyCon, instTys)) = 
       Just (toIfaceTyCon famTyCon, map toIfaceType instTys)
 
-tyThingToIfaceDecl c@(ACoAxiom _) = pprPanic "tyThingToIfaceDecl (ACoCon _)" (ppr c)
+tyThingToIfaceDecl (ACoAxiom ax) = pprPanic "tyThingToIfaceDecl" (ppr ax)
 
 tyThingToIfaceDecl (ADataCon dc)
  = pprPanic "toIfaceDecl" (ppr dc)      -- Should be trimmed out earlier
@@ -1566,11 +1573,16 @@ instanceToIfaceInst (Instance { is_dfun = dfun_id, is_flag = oflag,
 
 --------------------------
 famInstToIfaceFamInst :: FamInst -> IfaceFamInst
-famInstToIfaceFamInst (FamInst { fi_tycon = tycon,
-                                 fi_fam = fam,
-                                 fi_tcs = mb_tcs })
-  = IfaceFamInst { ifFamInstTyCon  = toIfaceTyCon tycon
+famInstToIfaceFamInst (FamInst { fi_axiom  = axiom,
+                                 fi_flavor = flavor,
+                                 fi_fam    = fam,
+                                 fi_tcs    = mb_tcs })
+  = IfaceFamInst { ifFamInstAxiom  = IfaceCoAx (coAxiomName axiom) 
+                                       `IfaceCoConApp` []
                  , ifFamInstFam    = fam
+                 , ifFamInstTyCon  = case flavor of
+                                       SynFamilyInst     -> Nothing
+                                       DataFamilyInst tc -> Just (toIfaceTyCon tc)
                  , ifFamInstTys    = map do_rough mb_tcs }
   where
     do_rough Nothing  = Nothing

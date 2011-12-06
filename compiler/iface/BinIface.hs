@@ -1461,15 +1461,17 @@ instance Binary IfaceInst where
         return (IfaceInst cls tys dfun flag orph)
 
 instance Binary IfaceFamInst where
-    put_ bh (IfaceFamInst fam tys tycon) = do
+    put_ bh (IfaceFamInst fam tys flavor axiom) = do
         put_ bh fam
         put_ bh tys
-        put_ bh tycon
+        put_ bh flavor
+        put_ bh axiom
     get bh = do
-        fam   <- get bh
-        tys   <- get bh
-        tycon <- get bh
-        return (IfaceFamInst fam tys tycon)
+        fam    <- get bh
+        tys    <- get bh
+        flavor <- get bh
+        axiom  <- get bh
+        return (IfaceFamInst fam tys flavor axiom)
 
 instance Binary OverlapFlag where
     put_ bh (NoOverlap  b) = putByte bh 0 >> put_ bh b

@@ -161,9 +161,10 @@ data IfaceInst
         -- and if the head does not change it won't be used if it wasn't before
 
 data IfaceFamInst
-  = IfaceFamInst { ifFamInstFam   :: IfExtName                -- Family tycon
+  = IfaceFamInst { ifFamInstFam   :: IfExtName           -- Family name
                  , ifFamInstTys   :: [Maybe IfaceTyCon]  -- Rough match types
-                 , ifFamInstTyCon :: IfaceTyCon          -- Instance decl
+                 , ifFamInstAxiom :: IfaceCoercion       -- Axiom
+                 , ifFamInstTyCon :: Maybe IfaceTyCon    -- data family TyCon
                  }
 
 data IfaceRule
@@ -552,10 +553,10 @@ instance Outputable IfaceInst where
 
 instance Outputable IfaceFamInst where
   ppr (IfaceFamInst {ifFamInstFam = fam, ifFamInstTys = mb_tcs,
-                     ifFamInstTyCon = tycon_id})
+                     ifFamInstAxiom = tycon_ax})
     = hang (ptext (sLit "family instance") <+>
             ppr fam <+> brackets (pprWithCommas ppr_rough mb_tcs))
-         2 (equals <+> ppr tycon_id)
+         2 (equals <+> ppr tycon_ax)
 
 ppr_rough :: Maybe IfaceTyCon -> SDoc
 ppr_rough Nothing   = dot

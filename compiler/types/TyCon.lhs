@@ -22,7 +22,9 @@ module TyCon(
 	SynTyConRhs(..),
 
 	-- ** Coercion axiom constructors
-        CoAxiom(..), coAxiomName, coAxiomArity,
+        CoAxiom(..), mkCoAxiom,
+        coAxiomName, coAxiomArity, coAxiomTyVars,
+        coAxiomLHS, coAxiomRHS,
 
         -- ** Constructing TyCons
 	mkAlgTyCon,
@@ -71,7 +73,7 @@ module TyCon(
 	tyConArity,
         tyConParent,
 	tyConTuple_maybe, tyConClass_maybe, tyConIP_maybe,
-	tyConFamInst_maybe, tyConFamilyCoercion_maybe,tyConFamInstSig_maybe,
+	tyConFamInst_maybe, tyConFamInstSig_maybe, tyConFamilyCoercion_maybe,
         synTyConDefn, synTyConRhs, synTyConType,
         tyConExtName,           -- External name for foreign types
 	algTyConRhs,
@@ -602,11 +604,11 @@ instance Outputable TyConParent where
 
 -- | Checks the invariants of a 'TyConParent' given the appropriate type class name, if any
 okParent :: Name -> TyConParent -> Bool
-okParent _       NoParentTyCon                    = True
-okParent tc_name (AssocFamilyTyCon cls)           = tc_name `elem` map tyConName (classATs cls)
-okParent tc_name (ClassTyCon cls)                 = tc_name == tyConName (classTyCon cls)
-okParent tc_name (IPTyCon ip)                     = tc_name == ipTyConName ip
-okParent _       (FamInstTyCon fam_tc tys _co_tc) = tyConArity fam_tc == length tys
+okParent _       NoParentTyCon               = True
+okParent tc_name (AssocFamilyTyCon cls)      = tc_name `elem` map tyConName (classATs cls)
+okParent tc_name (ClassTyCon cls)            = tc_name == tyConName (classTyCon cls)
+okParent tc_name (IPTyCon ip)                = tc_name == ipTyConName ip
+okParent _       (FamInstTyCon fam_tc tys _) = tyConArity fam_tc == length tys
 
 isNoParent :: TyConParent -> Bool
 isNoParent NoParentTyCon = True
@@ -758,19 +760,29 @@ so the coercion tycon CoT must have
 -- | A 'CoAxiom' is a \"coercion constructor\", i.e. a named equality axiom.
 data CoAxiom
   = CoAxiom                   -- type equality axiom.
-    { co_ax_unique :: Unique   -- unique identifier
-    , co_ax_name   :: Name     -- name for pretty-printing
-    , co_ax_tvs    :: [TyVar]  -- bound type variables 
-    , co_ax_lhs    :: Type     -- left-hand side of the equality
-    , co_ax_rhs    :: Type     -- right-hand side of the equality
+    { co_ax_unique :: Unique      -- unique identifier
+    , co_ax_name   :: Name        -- name for pretty-printing
+    , co_ax_tvs    :: [TyVar]     -- bound type variables 
+    , co_ax_lhs    :: Type        -- left-hand side of the equality
+    , co_ax_rhs    :: Type        -- right-hand side of the equality
     }
   deriving Typeable
+
+mkCoAxiom :: Unique -> Name -> [TyVar] -> Type -> Type -> CoAxiom
+mkCoAxiom u n tvs lhs rhs = CoAxiom u n tvs lhs rhs
 
 coAxiomArity :: CoAxiom -> Arity
 coAxiomArity ax = length (co_ax_tvs ax)
 
 coAxiomName :: CoAxiom -> Name
 coAxiomName = co_ax_name
+
+coAxiomTyVars :: CoAxiom -> [TyVar]
+coAxiomTyVars = co_ax_tvs
+
+coAxiomLHS, coAxiomRHS :: CoAxiom -> Type
+coAxiomLHS = co_ax_lhs
+coAxiomRHS = co_ax_rhs
 \end{code}
 
 
@@ -1465,8 +1477,8 @@ isFamInstTyCon tc = case tyConParent tc of
 tyConFamInstSig_maybe :: TyCon -> Maybe (TyCon, [Type], CoAxiom)
 tyConFamInstSig_maybe tc
   = case tyConParent tc of
-      FamInstTyCon f ts co_tc -> Just (f, ts, co_tc)
-      _                       -> Nothing
+      FamInstTyCon f ts ax -> Just (f, ts, ax)
+      _                    -> Nothing
 
 -- | If this 'TyCon' is that of a family instance, return the family in question
 -- and the instance types. Otherwise, return @Nothing@

@@ -458,14 +458,21 @@ tc_iface_decl parent _ (IfaceSyn {ifName = occ_name, ifTyVars = tv_bndrs,
      ; rhs      <- forkM (mk_doc tc_name) $ 
                    tc_syn_rhs mb_rhs_ty
      ; fam_info <- tcFamInst mb_family
-     ; tycon <- buildSynTyCon tc_name tyvars rhs rhs_kind parent fam_info
-     ; return (ATyCon tycon)
+     ; case fam_info of
+         -- A synonym
+         Nothing -> do { tycon <- buildSynTyCon tc_name tyvars rhs rhs_kind parent
+                       ; return (ATyCon tycon) }
+         -- A type instance
+         Just (famTycon, instTys) -> return $ ACoAxiom $
+                mkTypeFamInstCo tc_name tyvars famTycon instTys (extractRHS rhs)
      }
    where
      mk_doc n = ptext (sLit "Type syonym") <+> ppr n
      tc_syn_rhs Nothing   = return SynFamilyTyCon
      tc_syn_rhs (Just ty) = do { rhs_ty <- tcIfaceType ty
                                ; return (SynonymTyCon rhs_ty) }
+     extractRHS (SynonymTyCon rhs) = rhs
+     extractRHS SynFamilyTyCon     = panic "extractRHS"
 
 tc_iface_decl _parent ignore_prags
             (IfaceClass {ifCtxt = rdr_ctxt, ifName = tc_occ,
@@ -612,14 +619,19 @@ tcIfaceInst (IfaceInst { ifDFun = dfun_occ, ifOFlag = oflag,
        ; return (mkImportedInstance cls mb_tcs' dfun oflag) }
 
 tcIfaceFamInst :: IfaceFamInst -> IfL FamInst
-tcIfaceFamInst (IfaceFamInst { ifFamInstTyCon = tycon, 
-                               ifFamInstFam = fam, ifFamInstTys = mb_tcs })
---      { tycon'  <- forkM (ptext (sLit "Inst tycon") <+> ppr tycon) $
--- the above line doesn't work, but this below does => CPP in Haskell = evil!
-    = do tycon'  <- forkM (text ("Inst tycon") <+> ppr tycon) $
-                    tcIfaceTyCon tycon
+tcIfaceFamInst (IfaceFamInst { ifFamInstFam = fam, ifFamInstTys = mb_tcs
+                             , ifFamInstAxiom = axiom
+                             , ifFamInstTyCon = mb_tycon } )
+    = do coercion  <- forkM (text ("Inst axiom") <+> ppr axiom) $
+                      tcIfaceCo axiom
          let mb_tcs' = map (fmap ifaceTyConName) mb_tcs
-         return (mkImportedFamInst fam mb_tcs' tycon')
+             axiom'  = case coercion of
+                         AxiomInstCo ax [] -> ax
+                         _ -> pprPanic "tcIfaceFamInst" (ppr coercion)
+         flavor <- case mb_tycon of
+                     Nothing -> return SynFamilyInst
+                     Just tc -> fmap DataFamilyInst (tcIfaceTyCon tc)
+         return (mkImportedFamInst fam mb_tcs' flavor axiom')
 \end{code}
 
 
